@@ -1,114 +1,132 @@
-import {
-	Editor,
-	MarkdownView,
-	MarkdownFileInfo,
-	Modal,
-	Notice,
-	Plugin,
-} from 'obsidian';
-import {
-	DEFAULT_SETTINGS,
-	MyPluginSettings,
-	SampleSettingTab,
-} from './settings';
-
-// Remember to rename these classes and interfaces!
+import { Editor, MarkdownView, Plugin } from 'obsidian';
 
 export default class MyPlugin extends Plugin {
-	settings!: MyPluginSettings;
-
 	async onload() {
-		await this.loadSettings();
-
-		// This creates an icon in the left ribbon.
-		this.addRibbonIcon('dice', 'Sample', (_evt: MouseEvent) => {
-			// Called when the user clicks the icon.
-			new Notice('This is a notice!');
-		});
-
-		// This adds a status bar item to the bottom of the app. Does not work on mobile apps.
-		const statusBarItemEl = this.addStatusBarItem();
-		statusBarItemEl.setText('Status bar text');
-
-		// This adds a simple command that can be triggered anywhere
 		this.addCommand({
-			id: 'open-modal-simple',
-			name: 'Open modal (simple)',
-			callback: () => {
-				new SampleModal(this.app).open();
+			id: 'sort-checklist',
+			name: 'Sort Checklist (unchecked first)',
+			editorCallback: (editor: Editor) => {
+				this.sortChecklist(editor);
 			},
 		});
-		// This adds an editor command that can perform some operation on the current editor instance
-		this.addCommand({
-			id: 'replace-selected',
-			name: 'Replace selected content',
-			editorCallback: (
-				editor: Editor,
-				_ctx: MarkdownView | MarkdownFileInfo,
-			) => {
-				editor.replaceSelection('Sample editor command');
-			},
-		});
-		// This adds a complex command that can check whether the current state of the app allows execution of the command
-		this.addCommand({
-			id: 'open-modal-complex',
-			name: 'Open modal (complex)',
-			checkCallback: (checking: boolean) => {
-				// Conditions to check
-				const markdownView =
-					this.app.workspace.getActiveViewOfType(MarkdownView);
-				if (markdownView) {
-					// If checking is true, we're simply "checking" if the command can be run.
-					// If checking is false, then we want to actually perform the operation.
-					if (!checking) {
-						new SampleModal(this.app).open();
+	}
+
+	private sortChecklist(editor: Editor): void {
+		const content = editor.getValue();
+		const lines = content.split('\n');
+		const result = this.sortChecklistLines(lines);
+		editor.setValue(result.join('\n'));
+	}
+
+	private sortChecklistLines(lines: string[]): string[] {
+		// Build a tree of checklist blocks, preserving non-checklist lines in place
+		const result: string[] = [];
+		let i = 0;
+
+		while (i < lines.length) {
+			const line = lines[i];
+			if (line === undefined) break;
+			const indent = this.getIndentLevel(line);
+			const isTopLevelCheckbox = indent === 0 && this.isChecklistItem(line);
+
+			if (isTopLevelCheckbox) {
+				// Collect the full block of top-level checklist items (and their children)
+				const block = this.collectChecklistBlock(lines, i, 0);
+				const sorted = this.sortBlock(block);
+				result.push(...sorted.map(entry => entry.lines).flat());
+				i += block.reduce((sum, entry) => sum + entry.lines.length, 0);
+			} else {
+				result.push(line);
+				i++;
+			}
+		}
+
+		return result;
+	}
+
+	/**
+	 * Collects consecutive top-level checklist items and their indented children
+	 * into a list of entries, each containing the parent line + its child lines.
+	 */
+	private collectChecklistBlock(
+		lines: string[],
+		startIndex: number,
+		parentIndent: number
+	): ChecklistEntry[] {
+		const entries: ChecklistEntry[] = [];
+		let i = startIndex;
+
+		while (i < lines.length) {
+			const line = lines[i];
+			if (line === undefined) break; // ← guard against undefined
+
+			const indent = this.getIndentLevel(line);
+			const isChecklist = this.isChecklistItem(line);
+
+			if (indent <= parentIndent && !isChecklist) break;
+			if (indent === parentIndent && !isChecklist) break;
+			if (indent < parentIndent) break;
+			if (indent === parentIndent && isChecklist) {
+				const entryLines: string[] = [line];
+				i++;
+
+				while (i < lines.length) {
+					const childLine = lines[i];
+					if (childLine === undefined) break; // ← guard against undefined
+
+					const childIndent = this.getIndentLevel(childLine);
+
+					if (childIndent > parentIndent) {
+						entryLines.push(childLine);
+						i++;
+					} else {
+						break;
 					}
-
-					// This command will only show up in Command Palette when the check function returns true
-					return true;
 				}
-				return false;
-			},
-		});
 
-		// This adds a settings tab so the user can configure various aspects of the plugin
-		this.addSettingTab(new SampleSettingTab(this.app, this));
+				entries.push({
+					isChecked: this.isChecked(line),
+					lines: entryLines,
+				});
+			} else {
+				entries.push({
+					isChecked: false,
+					lines: [line],
+				});
+				i++;
+			}
+		}
 
-		// If the plugin hooks up any global DOM events (on parts of the app that doesn't belong to this plugin)
-		// Using this function will automatically remove the event listener when this plugin is disabled.
-		this.registerDomEvent(activeDocument, 'click', (_evt: MouseEvent) => {
-			new Notice('Click');
-		});
-
-		// When registering intervals, this function will automatically clear the interval when the plugin is disabled.
-		this.registerInterval(
-			window.setInterval(() => console.log('setInterval'), 5 * 60 * 1000),
-		);
+		return entries;
 	}
 
-	onunload() {}
 
-	async loadSettings() {
-		this.settings = Object.assign(
-			{},
-			DEFAULT_SETTINGS,
-			(await this.loadData()) as Partial<MyPluginSettings>,
-		);
+	/**
+	 * Sorts entries: unchecked first, checked last.
+	 * Relative order within each group is preserved (stable sort).
+	 */
+	private sortBlock(entries: ChecklistEntry[]): ChecklistEntry[] {
+		const unchecked = entries.filter(e => !e.isChecked);
+		const checked = entries.filter(e => e.isChecked);
+		return [...unchecked, ...checked];
 	}
 
-	async saveSettings() {
-		await this.saveData(this.settings);
+	private isChecklistItem(line: string): boolean {
+		return /^(\s*)-\s+\[( |x|X)\]/.test(line);
 	}
+
+	private isChecked(line: string): boolean {
+		return /^(\s*)-\s+\[x\]/i.test(line);
+	}
+
+	private getIndentLevel(line: string): number {
+		const match = line.match(/^(\s*)/);
+		return match ? match[1]?.length ?? 0 : 0;
+	}
+
 }
 
-class SampleModal extends Modal {
-	onOpen() {
-		const { contentEl } = this;
-		contentEl.setText('Woah!');
-	}
-
-	onClose() {
-		const { contentEl } = this;
-		contentEl.empty();
-	}
+interface ChecklistEntry {
+	isChecked: boolean;
+	lines: string[];    // Parent line + all its indented children
 }
