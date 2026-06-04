@@ -4,8 +4,7 @@
 	"version": "1.0.0",
 	"minAppVersion": "1.0.0",
 	"description": "Sort your Todo (checklist) items by undone via custom keybind!",
-	"author": "Obsidian",
-	"authorUrl": "https://obsidian.md",
-	"fundingUrl": "https://obsidian.md/pricing",
+	"author": "Adam Tweedie",
+	"authorUrl": "https://github.com/profesr-chaos",
 	"isDesktopOnly": false
 }
