@@ -1,6 +1,6 @@
 {
 	"id": "checklist-sort",
-	"name": "Checklist Sort ",
+	"name": "Checklist Sort",
 	"version": "1.0.1",
 	"minAppVersion": "1.0.0",
 	"description": "Sort your Todo (checklist) items by undone via custom keybind!",
